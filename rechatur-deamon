@@ -1,0 +1,77 @@
+#!/bin/bash
+
+
+if [[ "help" = "$1" ]] || [[ ! -n "${1}" ]] ;then
+    echo 本程序为rechatur的守护程序，帮助重新上传失败的文件和在无空间时停止录制。
+	exit 1
+fi
+
+
+DIR_LOCAL=${3}/$1
+REMOTE_DIR=$5
+ID=$1
+
+#仅上传
+if [[ "upload"  == "${10}" ]];then
+	rm -f $DIR_LOCAL/*.ts.*
+	ls $DIR_LOCAL|grep .ts |sed "s:^:"$DIR_LOCAL"/:"|sed 's/$/.fail/g'|xargs touch
+	#查找需要重新同步的文件
+	while true;do
+	NEED_RSYNC=$(ls $DIR_LOCAL|grep .ts.fail|sed "s:^:$DIR_LOCAL/:"|sed 's/.....$//'|xargs)
+	(for i in $(echo $NEED_RSYNC|awk '{print $0}')
+		do
+		rm -f $i.fail
+		touch $i.lock
+		(rsync -avRP -e "ssh -p $8"  "$i" "$9"@"$7"::$REMOTE_DIR && rm -f $i $i.lock ||(rm -f $i.lock ; touch $i.fail))&
+	done)&
+	ls $DIR_LOCAL | grep .ts  >/dev/null 2>&1
+	if [[ $? != 0 ]];then
+		echo 传输完毕
+		exit 0
+	fi
+	sleep 30
+	done
+fi
+
+#检查rechatur是否运行
+ps aux|grep $1|grep -v rechatur-deamon |grep rechatur >/dev/null 2>&1
+if [[ $? != 0 ]];then
+	echo 本程序为rechatur的守护程序，不能单独运行
+	exit 1
+fi
+
+
+#监视空间大小
+(while true;do
+	SPACE=$(df /| grep -v Filesystem|grep -v 文件系统|awk '{print $5}' |sed 's/.$//')
+	if [[ $SPACE -gt 90 ]];then
+		ps aux|grep $ID |grep rechatur|grep -v deamon|awk '{print $2}'| xargs kill -9
+		ps aux|grep $ID |grep ffmpeg|awk '{print $2}'| xargs kill -9
+		ls $DIR_LOCAL|grep .ts.rec|sed "s:^:$DIR_LOCAL/:"|sed 's/....$//'|sed 's/$/.fail/g'|xargs touch
+		ls $DIR_LOCAL | sed "s:^:$DIR_LOCAL/:" |grep .ts.rec| xargs rm -f
+		while true;do
+			SPACE=$(df /| grep -v Filesystem|grep -v 文件系统|awk '{print $5}' |sed 's/.$//')
+			if [[ $SPACE -lt 40 ]]
+				then ($(dirname $(readlink -f "$0"))/rechatur $1 $2 $3 $4 $5 $6 $7 $8 $9)&
+				break
+			fi
+			sleep 30
+		done
+	fi
+	sleep 30
+done
+)&
+
+if [[ "$4" == "yes" ]]; then
+
+while true;do
+	#查找需要重新同步的文件
+	NEED_RSYNC=$(ls $DIR_LOCAL|grep .ts.fail|sed "s:^:$DIR_LOCAL/:"|sed 's/.....$//'|xargs)
+	(for i in $(echo $NEED_RSYNC|awk '{print $0}')
+		do
+		mv $i.fail $i.lock
+		(rsync -avRP -e "ssh -p $8"  "$i" "$9"@"$7"::$REMOTE_DIR && rm -f $i $i.lock ||(mv $i.lock  $i.fail))&
+	done)&
+	sleep 30
+done
+fi
